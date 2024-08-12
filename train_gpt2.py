@@ -437,6 +437,7 @@ def pad_vocab(tensor, multiple=128, value=0):
     """
     assert tensor.ndim == 2
     V, C = tensor.shape
+    # print(f"V before assertion --> {V}")
     assert V == 50257, "just being defensive here"
     # calculate padded vocab size by rounding up to nearest multiple
     Vp = ((V + multiple - 1) // multiple) * multiple
@@ -507,16 +508,23 @@ def write_state(model, x, y, logits, loss, filename):
     print(f"wrote {filename}")
 
 def write_tokenizer(enc, filename):
+    # enc.SpecialTokenPolicy.IGNORE
+    # n = enc._vocab_size + 1
+    # ! Original
     n = enc.max_token_value + 1
     header = torch.zeros(256, dtype=torch.int32)
     header[0] = 20240328 # magic
     header[1] = 2 # tokenizer version = 2 (1 -> 2: includes EOT token)
     header[2] = n # number of tokens
+    # ! Original
     header[3] = enc.eot_token # EOT token
+    # header[3] = enc.eos_id # EOT token
     with open(filename, "wb") as file:
         file.write(header.numpy().tobytes())
         for i in range(n):
             b = enc.decode_bytes([i])
+            # print(b)
+            # b = b.encode('utf-8')
             length = len(b)
             assert length < 256, f"Token length exceeds 255: {length}"
             file.write(struct.pack("<B", length))  # Write the length as a 1-byte unsigned integer
@@ -542,27 +550,27 @@ if __name__ == "__main__":
     # and save model weights and debug state to disk on the first iteration
     parser = argparse.ArgumentParser()
     # file system input / output
-    parser.add_argument("--input_bin", type=str, default="dev/data/tinyshakespeare/tiny_shakespeare_val.bin", help="input .bin to train on")
-    parser.add_argument("--input_val_bin", type=str, default="", help="input .bin to eval validation loss on")
+    parser.add_argument("--input_bin", type=str, default="dev/data/SlimPajama-6b/SlimPajama-6b_train_000001.bin", help="input .bin to train on")
+    parser.add_argument("--input_val_bin", type=str, default="dev/data/SlimPajama-6b/SlimPajama-6b_val_000000.bin", help="input .bin to eval validation loss on")
     parser.add_argument("--output_dir", type=str, default="", help="output directory to which to write logs and checkpoints")
-    parser.add_argument("--model", type=str, default="gpt2", help="gpt2|gpt2-medium|gpt2-large|gpt2-xl|d12|d24|d36|d48")
+    parser.add_argument("--model", type=str, default="d6", help="gpt2|gpt2-medium|gpt2-large|gpt2-xl|d6|d12|d24|d36|d48")
     # token layout for each step of the optimization
     parser.add_argument("--batch_size", type=int, default=4, help="batch size, in units of #batch dimensions")
     parser.add_argument("--sequence_length", type=int, default=64, help="sequence length")
     parser.add_argument("--total_batch_size", type=int, default=256, help="total desired batch size, in units of #tokens")
     # workload (number of steps)
-    parser.add_argument("--num_iterations", type=int, default=10, help="number of iterations to run")
+    parser.add_argument("--num_iterations", type=int, default=5000, help="number of iterations to run")
     parser.add_argument("--inference_only", type=int, default=0, help="only run inference")
     # optimization
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="learning rate warmup iterations")
-    parser.add_argument("--warmup_iters", type=int, default=0, help="learning rate warmup iterations")
+    parser.add_argument("--warmup_iters", type=int, default=20, help="learning rate warmup iterations")
     parser.add_argument("--learning_rate_decay_frac", type=float, default=1.0, help="learning rate warmup iterations")
     parser.add_argument("--weight_decay", type=float, default=0.0, help="weight decay")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="maximum gradient magnitude")
     # evaluation
-    parser.add_argument("--val_loss_every", type=int, default=0, help="every how mant steps to evaluate val loss?")
+    parser.add_argument("--val_loss_every", type=int, default=100, help="every how mant steps to evaluate val loss?")
     parser.add_argument("--val_max_steps", type=int, default=20, help="how many batches of val to average?")
-    parser.add_argument("--sample_every", type=int, default=0, help="how often to sample from the model?")
+    parser.add_argument("--sample_every", type=int, default=1000, help="how often to sample from the model?")
     # debugging
     parser.add_argument("--overfit_single_batch", type=int, default=1, help="overfit just one batch of data")
     # numerics
@@ -570,8 +578,8 @@ if __name__ == "__main__":
     # memory management
     parser.add_argument("--device", type=str, default="", help="by default we autodetect, or set it here")
     parser.add_argument("--compile", type=int, default=0, help="torch.compile the model")
-    parser.add_argument("--flash", type=int, default=0, help="use flash attention")
-    parser.add_argument("--dtype", type=str, default="float32", help="float32|float16|bfloat16")
+    parser.add_argument("--flash", type=int, default=1, help="use flash attention")
+    parser.add_argument("--dtype", type=str, default="float16", help="float32|float16|bfloat16")
     parser.add_argument("--zero_stage", type=int, default=0, help="zero redundancy optimizer stage (0/1/2/3)")
     # python -> C bridge
     parser.add_argument("--write_tensors", type=int, default=1, help="write tensors to disk")
@@ -581,7 +589,7 @@ if __name__ == "__main__":
     B, T = args.batch_size, args.sequence_length
     assert 1 <= T <= 1024
     assert args.dtype in {"float32", "float16", "bfloat16"}
-    assert args.model in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl", "d12", "d24", "d36", "d48"}
+    assert args.model in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl", "d12", "d24", "d36", "d48", "d6"}
 
     # set up DDP (distributed data parallel). torchrun sets this env variable
     ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
@@ -619,6 +627,10 @@ if __name__ == "__main__":
     device_type = 'cuda' if 'cuda' in device else 'cpu'
 
     # calculate gradient accumulation from the desired total batch size and the current run configuration
+    # Computes the number of tokens processed per forward/backward pass.
+    # Checks that total_batch_size is divisible by tokens_per_fwdbwd and calculates the number of gradient accumulation steps needed.
+    # GRADIENT ACCUMULATION -- Accumulates gradients to reduce the memory requirement. Because all gradients are not processed
+    # simultaneously rather they are accumulated step by step and when a certain amount is reached then sent for processing.
     tokens_per_fwdbwd = B * T * ddp_world_size
     assert args.total_batch_size % tokens_per_fwdbwd == 0
     grad_accum_steps = args.total_batch_size // tokens_per_fwdbwd
@@ -628,6 +640,7 @@ if __name__ == "__main__":
     # set up a context manager following the desired dtype and device
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[args.dtype]
     ctx = torch.amp.autocast(device_type=device_type, dtype=ptdtype) if device_type == "cuda" else nullcontext()
+    print(ctx)
 
     # rng / reproducibility
     torch.manual_seed(42)
@@ -643,15 +656,22 @@ if __name__ == "__main__":
     assert args.flash in {0, 1}
     FLASH = args.flash
 
+    # from dev.data.tokenizer.tekken import Tekkenizer
+    # from mistral_common.tokens.tokenizers.tekken import SpecialTokenPolicy
+    # ! ORIGINAL
     # init (and write) the tokenizer
     enc = tiktoken.get_encoding("gpt2")
     if master_process and args.write_tensors: # tokenizer is technically not tensors but ok
-        write_tokenizer(enc, "gpt2_tokenizer.bin")
+        write_tokenizer(enc, "gpt2_tokenizer_python.bin")
+    # enc = Tekkenizer.from_file("dev/data/tokenizer/tekken_240718.json")
+    # if master_process and args.write_tensors:
+    #     write_tokenizer(enc, "tekken_tokenizer.bin")
 
     # init the model, either from scratch or from OpenAI pretrained checkpoint
     if args.model[0] == "d":
         # from scratch (random weights)
         model_config = {
+            "d6": GPTConfig(block_size=1024, vocab_size=50257, n_layer=8, n_head=8, n_embd=576),
             "d12": GPTConfig(block_size=1024, vocab_size=50257, n_layer=12, n_head=12, n_embd=768),
             "d24": GPTConfig(block_size=1024, vocab_size=50257, n_layer=24, n_head=16, n_embd=1024),
             "d36": GPTConfig(block_size=1024, vocab_size=50257, n_layer=36, n_head=20, n_embd=1280),
@@ -689,13 +709,14 @@ if __name__ == "__main__":
         loss.backward()
         # save model params, in both float32 and bfloat16
         model_to_size = {"gpt2": "124M", "gpt2-medium": "355M", "gpt2-large": "774M", "gpt2-xl": "1558M"}
-        model_to_size.update({f"d{d}": f"d{d}" for d in [12, 24, 36, 48]})
+        model_to_size.update({f"d{d}": f"d{d}" for d in [6, 12, 24, 36, 48]})
         model_size_str = model_to_size[args.model] # e.g. "124M", or "d12"
-        write_model(model, f"gpt2_{model_size_str}.bin", dtype="float32")
-        write_model(model, f"gpt2_{model_size_str}_bf16.bin", dtype="bfloat16")
+        # ! - Make the name changes.
+        write_model(model, f"gpt2_python_{model_size_str}.bin", dtype="float32")
+        write_model(model, f"gpt2_python_{model_size_str}_bf16.bin", dtype="bfloat16")
         # save x, y, logits, loss, and parameter gradients, for debugging C
         # always store these in fp32 to have an accurate reference (?)
-        write_state(model, x, y, logits, loss, f"gpt2_{model_size_str}_debug_state.bin")
+        write_state(model, x, y, logits, loss, f"gpt2_python_{model_size_str}_debug_state.bin")
         # reset the train_loader for the optimization below
         train_loader.reset()
 
@@ -773,9 +794,9 @@ if __name__ == "__main__":
             # we'll kick off the generation with "<|endoftext|>", which designates the start of a new sequence
             start_ids = [enc.eot_token]
             xg = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
-            max_new_tokens = 32
+            max_new_tokens = 128
             temperature = 1.0
-            top_k = 40
+            top_k = 10
             yg = raw_model.generate(xg, max_new_tokens, temperature=temperature, top_k=top_k)
             print0('---------------')
             print0(enc.decode(yg[0].tolist()))

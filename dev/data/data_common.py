@@ -39,8 +39,11 @@ def write_datafile(filename, toks):
     if not isinstance(toks, np.ndarray) or not toks.dtype == np.uint16:
         # validate that no token exceeds a uint16
         maxtok = 2**16
+        # ! maxtok = 2**32
         assert all(0 <= t < maxtok for t in toks), "token dictionary too large for uint16"
+        # ! assert all(0 <= t < maxtok for t in toks), "token dictionary too large for uint32"
         toks_np = np.array(toks, dtype=np.uint16)
+        # ! toks_np = np.array(toks, dtype=np.uint32)
     else:
         toks_np = toks
     # write to file

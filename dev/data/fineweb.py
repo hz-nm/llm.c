@@ -80,6 +80,7 @@ with mp.Pool(nprocs) as pool:
     all_tokens_np = np.empty((args.shard_size,), dtype=np.uint16)
     token_count = 0
     progress_bar = None
+    # fw --> The list of strings. i.e. the fine web dataset
     for tokens in pool.imap(tokenize, fw, chunksize=16):
 
         # is there enough space in the current shard for the new tokens?
