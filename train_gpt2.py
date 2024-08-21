@@ -39,6 +39,7 @@ import torch.distributed as dist
 
 class NewGELU(nn.Module):
     """Careful there are a few versions of GeLU, this one is the exact one used by OpenAI"""
+    # TODO Make a new function for implementing SwiGLU
     def forward(self, input):
         return 0.5 * input * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (input + 0.044715 * torch.pow(input, 3.0))))
 
@@ -119,7 +120,7 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024
+    block_size: int = 512
     vocab_size: int = 50257
     n_layer: int = 12
     n_head: int = 12
@@ -237,6 +238,83 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+    
+    @classmethod
+    def from_checkpoint(cls,checkpoint_path, device):
+        """Loads model weights from saved checkpoints from previous training"""
+        print("loading weights from previous run")
+        
+        
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint_model_args = checkpoint['model_args']
+        model_steps_prev = checkpoint.get('step', 0)
+        
+        print(f"------------- MODEL STEPPPP -------- {model_steps_prev}")
+        print(checkpoint_model_args)
+        print(checkpoint['step'])
+        print(checkpoint['config'])
+        
+        # ! Let's force the model config from the checkpoint params else model cannot resume training.
+        model_config = GPTConfig(
+                block_size=checkpoint_model_args.block_size,
+                vocab_size=checkpoint_model_args.vocab_size,
+                n_layer=checkpoint_model_args.n_layer,
+                n_head=checkpoint_model_args.n_head,
+                n_embd=checkpoint_model_args.n_embd
+        )
+        # config_args = model_config
+        # config_args['vocab_size'] = 50257 # always 50257 for GPT model checkpoints
+        # config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
+        # create a from-scratch initialized minGPT model
+        # config = GPTConfig(**config_args)
+        model = GPT(model_config)
+        # state_dict = torch.load(checkpoint_path) # ! ---> What is this bullshit??
+        state_dict = checkpoint.get('model')
+        sd = model.state_dict()
+        
+        # fix the keys of the state dictionary :(
+        # honestly no idea how checkpoints sometimes get this prefix, have to debug more
+        unwanted_prefix = '_orig_mod.'
+        for k,v in list(state_dict.items()):
+            if k.startswith(unwanted_prefix):
+                state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+        
+        sd_keys = sd.keys()
+        
+        print(f" THE STATE DICT KEYS ---)))>>> {state_dict.keys()}")
+        print(f" THE STATE DICT KEYS ---)))>>> {sd.keys()}")
+        # * Ignore the keys related to attention masks
+        # sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
+
+        # # Handle transposition of weights if possible. Why do you need transposition?
+        # # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
+        # # this means that we have to transpose these weights when we import them
+        # transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
+        # for k in sd_keys:
+        #     if any(k.endswith(w) for w in transposed):
+        #         # special treatment for the Conv1D weights we need to transpose
+        #         assert state_dict[k].shape[::-1] == sd[k].shape
+        #         with torch.no_grad():
+        #             sd[k].copy_(state_dict[k].t())
+        #     else:
+        #         # vanilla copy over the other parameters
+        #         assert state_dict[k].shape == sd[k].shape
+        #         with torch.no_grad():
+        #             sd[k].copy_(state_dict[k])
+        
+        
+        previous_step = checkpoint.get('step', 0)
+        optimizer_state = checkpoint.get('optimizer', None)
+        
+        model_params = {
+            'model': model,
+            'optimizer_state': optimizer_state,
+            'previous_step': previous_step,
+            'model_config': checkpoint_model_args
+        }
+        
+        # return model, optimizer_state, previous_step, checkpoint_model_args
+        return model_params
 
     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type, zero_stage):
         # start with all of the candidate parameters
@@ -550,27 +628,28 @@ if __name__ == "__main__":
     # and save model weights and debug state to disk on the first iteration
     parser = argparse.ArgumentParser()
     # file system input / output
-    parser.add_argument("--input_bin", type=str, default="dev/data/SlimPajama-6b/SlimPajama-6b_train_000001.bin", help="input .bin to train on")
-    parser.add_argument("--input_val_bin", type=str, default="dev/data/SlimPajama-6b/SlimPajama-6b_val_000000.bin", help="input .bin to eval validation loss on")
-    parser.add_argument("--output_dir", type=str, default="", help="output directory to which to write logs and checkpoints")
-    parser.add_argument("--model", type=str, default="d6", help="gpt2|gpt2-medium|gpt2-large|gpt2-xl|d6|d12|d24|d36|d48")
+    parser.add_argument("--input_bin", type=str, default="dev/data/tinyshakespeare/tiny_shakespeare_train.bin", help="input .bin to train on")
+    # parser.add_argument("--input_bin", type=str, default="dev/data/SlimPajama-6b/SlimPajama-6b_train_*.bin", help="input .bin to train on")
+    parser.add_argument("--input_val_bin", type=str, default="dev/data/tinyshakespeare/tiny_shakespeare_val.bin", help="input .bin to eval validation loss on")
+    parser.add_argument("--output_dir", type=str, default="train_output_pyins", help="output directory to which to write logs and checkpoints")
+    parser.add_argument("--model", type=str, default="resume", help="gpt2|gpt2-medium|gpt2-large|gpt2-xl|d6|d12|d24|d36|d48|resume")
     # token layout for each step of the optimization
     parser.add_argument("--batch_size", type=int, default=4, help="batch size, in units of #batch dimensions")
-    parser.add_argument("--sequence_length", type=int, default=64, help="sequence length")
-    parser.add_argument("--total_batch_size", type=int, default=256, help="total desired batch size, in units of #tokens")
+    parser.add_argument("--sequence_length", type=int, default=512, help="sequence length") # ! Original = 4
+    parser.add_argument("--total_batch_size", type=int, default=2048, help="total desired batch size, in units of #tokens") # ! Original 256 because - 4 x 1024 = 4096 i.e. batch_size * sequence_length
     # workload (number of steps)
-    parser.add_argument("--num_iterations", type=int, default=5000, help="number of iterations to run")
+    parser.add_argument("--num_iterations", type=int, default=600000, help="number of iterations to run") # ! Each batch processes 4 sentences, so it takes 12,000 / 4 = 3,000 iterations to go through the dataset once.
     parser.add_argument("--inference_only", type=int, default=0, help="only run inference")
     # optimization
     parser.add_argument("--learning_rate", type=float, default=1e-4, help="learning rate warmup iterations")
-    parser.add_argument("--warmup_iters", type=int, default=20, help="learning rate warmup iterations")
-    parser.add_argument("--learning_rate_decay_frac", type=float, default=1.0, help="learning rate warmup iterations")
+    parser.add_argument("--warmup_iters", type=int, default=100, help="learning rate warmup iterations")
+    parser.add_argument("--learning_rate_decay_frac", type=float, default=0.95, help="learning rate warmup iterations") # This parameter determines the fraction by which the learning rate is multiplied at each decay step. A value of 1.0 means no decay, while a value less than 1.0 means the learning rate will decrease over time.
     parser.add_argument("--weight_decay", type=float, default=0.0, help="weight decay")
-    parser.add_argument("--grad_clip", type=float, default=1.0, help="maximum gradient magnitude")
+    parser.add_argument("--grad_clip", type=float, default=1.0, help="maximum gradient magnitude")  # Gradient clipping limits the magnitude of gradients during backpropagation to prevent exploding gradients, which can destabilize training.
     # evaluation
-    parser.add_argument("--val_loss_every", type=int, default=100, help="every how mant steps to evaluate val loss?")
+    parser.add_argument("--val_loss_every", type=int, default=10, help="every how mant steps to evaluate val loss?")
     parser.add_argument("--val_max_steps", type=int, default=20, help="how many batches of val to average?")
-    parser.add_argument("--sample_every", type=int, default=1000, help="how often to sample from the model?")
+    parser.add_argument("--sample_every", type=int, default=10, help="how often to sample from the model?")
     # debugging
     parser.add_argument("--overfit_single_batch", type=int, default=1, help="overfit just one batch of data")
     # numerics
@@ -579,17 +658,46 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="", help="by default we autodetect, or set it here")
     parser.add_argument("--compile", type=int, default=0, help="torch.compile the model")
     parser.add_argument("--flash", type=int, default=1, help="use flash attention")
-    parser.add_argument("--dtype", type=str, default="float16", help="float32|float16|bfloat16")
+    parser.add_argument("--dtype", type=str, default="bfloat16", help="float32|float16|bfloat16")
     parser.add_argument("--zero_stage", type=int, default=0, help="zero redundancy optimizer stage (0/1/2/3)")
     # python -> C bridge
     parser.add_argument("--write_tensors", type=int, default=1, help="write tensors to disk")
     args = parser.parse_args()
+    
+    init_from = "scratch"       # * When restarting from a checkpoint use init_from = resume.
+    
+    output_dir = "model_21082024"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # TODO Make a config dict kind of which contains all of the parameters that have been provided above.
+    do_not_include_in_config = ['input_bin', 'input_val_bin']
+    config_dict = {k: v for k, v in vars(args).items() if k not in do_not_include_in_config}
+
+
+    
+    # ! Find if device has been specified else pick it up yourself.
+    # if args.device:
+    #     device = args.device
+    # else:
+    #     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+        
+    # if init_from == "resume":
+    #     print(f"Resuming from checkpoint available at {output_dir}")
+    #     checkpoint_path = os.path.join(output_dir, 'checkpoint.pt')
+    #     checkpoint = torch.load(checkpoint_path, map_location=device)
+    #     checkpoint_model_args = checkpoint['model_args']
+        
+    #     # ! Let's force the model config from the checkpoint params else model cannot resume training.
+    #     for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+    #         model_args[k] = checkpoint_model_args[k]
 
     # args error checking and convenience variables
     B, T = args.batch_size, args.sequence_length
+    # ! assert 1 <= T <= 1024
     assert 1 <= T <= 1024
     assert args.dtype in {"float32", "float16", "bfloat16"}
-    assert args.model in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl", "d12", "d24", "d36", "d48", "d6"}
+    assert args.model in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl", "d12", "d24", "d36", "d48", "d6", "resume"}
 
     # set up DDP (distributed data parallel). torchrun sets this env variable
     ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
@@ -662,7 +770,7 @@ if __name__ == "__main__":
     # init (and write) the tokenizer
     enc = tiktoken.get_encoding("gpt2")
     if master_process and args.write_tensors: # tokenizer is technically not tensors but ok
-        write_tokenizer(enc, "gpt2_tokenizer_python.bin")
+        write_tokenizer(enc, "gpt2_tokenizer_21082024.bin")
     # enc = Tekkenizer.from_file("dev/data/tokenizer/tekken_240718.json")
     # if master_process and args.write_tensors:
     #     write_tokenizer(enc, "tekken_tokenizer.bin")
@@ -671,16 +779,32 @@ if __name__ == "__main__":
     if args.model[0] == "d":
         # from scratch (random weights)
         model_config = {
-            "d6": GPTConfig(block_size=1024, vocab_size=50257, n_layer=8, n_head=8, n_embd=576),
+            "d6": GPTConfig(block_size=512, vocab_size=50257, n_layer=8, n_head=8, n_embd=576),
             "d12": GPTConfig(block_size=1024, vocab_size=50257, n_layer=12, n_head=12, n_embd=768),
             "d24": GPTConfig(block_size=1024, vocab_size=50257, n_layer=24, n_head=16, n_embd=1024),
             "d36": GPTConfig(block_size=1024, vocab_size=50257, n_layer=36, n_head=20, n_embd=1280),
             "d48": GPTConfig(block_size=1024, vocab_size=50257, n_layer=48, n_head=25, n_embd=1600),
         }[args.model]
         model = GPT(model_config)
+        previous_step = 0
+        
+    elif args.model == "resume":
+        # load the model from a checkpoint
+        print(f"Resuming from checkpoint available at {output_dir}")
+        checkpoint_path = os.path.join(output_dir, 'checkpoint.pt')
+        # ? checkpoint = torch.load(checkpoint_path, map_location=device)
+        model_params = GPT.from_checkpoint(checkpoint_path=checkpoint_path, device=device)
+        model = model_params.get('model')
+        optimizer_state = model_params.get('optimizer_state')
+        previous_step = model_params.get('previous_step')
+        model_config = model_params.get('model_config')
+        # checkpoint = torch.load(checkpoint_path, map_location=device)
+ 
     else:
         # load the GPT-2 model weights
         model = GPT.from_pretrained(args.model)
+        previous_step = 0
+    
     model.train()
     model.to(device)
     if args.compile:
@@ -710,13 +834,19 @@ if __name__ == "__main__":
         # save model params, in both float32 and bfloat16
         model_to_size = {"gpt2": "124M", "gpt2-medium": "355M", "gpt2-large": "774M", "gpt2-xl": "1558M"}
         model_to_size.update({f"d{d}": f"d{d}" for d in [6, 12, 24, 36, 48]})
-        model_size_str = model_to_size[args.model] # e.g. "124M", or "d12"
+        # model_size_str = model_to_size[args.model] # e.g. "124M", or "d12"
+        # ! -----------------
+        # ! ----IMPORTANT----
+        # ! This variable has been fixed. This should not be fixed and should be inferenced from
+        # ! Config of the model and set accordingly.
+        # ! -----------------
+        model_size_str = model_to_size["d6"]
         # ! - Make the name changes.
-        write_model(model, f"gpt2_python_{model_size_str}.bin", dtype="float32")
-        write_model(model, f"gpt2_python_{model_size_str}_bf16.bin", dtype="bfloat16")
+        write_model(model, f"gpt2_21082024_{model_size_str}.bin", dtype="float32")
+        write_model(model, f"gpt2_21082024_{model_size_str}_bf16.bin", dtype="bfloat16")
         # save x, y, logits, loss, and parameter gradients, for debugging C
         # always store these in fp32 to have an accurate reference (?)
-        write_state(model, x, y, logits, loss, f"gpt2_python_{model_size_str}_debug_state.bin")
+        write_state(model, x, y, logits, loss, f"gpt2_21082024_{model_size_str}_debug_state.bin")
         # reset the train_loader for the optimization below
         train_loader.reset()
 
@@ -732,6 +862,8 @@ if __name__ == "__main__":
     optimizer = raw_model.configure_optimizers(weight_decay=args.weight_decay,
                                                learning_rate=args.learning_rate, betas=(0.9, 0.95),
                                                device_type=device, zero_stage=zero_stage)
+    if args.model == "resume":
+        optimizer.load_state_dict(optimizer_state)
 
     # learning rate decay scheduler (cosine with warmup)
     def get_lr(it):
@@ -761,8 +893,13 @@ if __name__ == "__main__":
         torch.cuda.reset_peak_memory_stats()
     timings = []
     norm = -1.0   # dummy value to print in inference-only mode
-    for step in range(args.num_iterations + 1):
+    # for step in range(args.num_iterations + 1):       # ! ORIGINAL
+    if not previous_step:
+        previous_step = 0
+        
+    for step in range(previous_step, args.num_iterations + 1):
         t0 = time.time()
+        # last_checkpoint_step = model_steps_prev
         last_step = (step == args.num_iterations)
 
         # once in a while evaluate the validation dataset
@@ -801,6 +938,22 @@ if __name__ == "__main__":
             print0('---------------')
             print0(enc.decode(yg[0].tolist()))
             print0('---------------')
+            
+            print0("Validation Inference done. Now saving checkpoint")
+            # TODO code for saving the checkpoint to output_dir
+            print(f'---------- THE STEP AGAIN ------> {step}')
+            checkpoint = {
+                'model': raw_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'model_args': model_config, #// TODO Check if this is alright -- YES IT IS!
+                'step': step,
+                'best_val_loss': val_loss,
+                'config': config_dict, # * This contains all of the params that are forwarded into the model before training.
+            }
+            
+            print(f"Saving checkpoint to {output_dir}")
+            torch.save(checkpoint, os.path.join(output_dir, 'checkpoint.pt'))
+            
 
         # bit confusing: we want to make sure to eval and sample on 0th iteration
         # but also after the very last iteration. so we loop for step <= num_iterations

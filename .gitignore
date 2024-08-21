@@ -36,3 +36,6 @@ dev/cuda/global_norm
 *.log
 
 *.safetensors
+
+# Intermeddiate checkpoints
+*.pt

@@ -1,160 +1,133 @@
-# from transformers import AutoModel, AutoTokenizer, AutoModelForCausalLM
-# import torch
-
-# # model = AutoModel.from_pretrained("gpt2_python_d6.bin", local_files_only=True)
-
-# device = torch.device("cuda")
-
-# tokenizer = AutoTokenizer.from_pretrained("gpt2_tokenizer.bin", local_files_only=True)
-# model_path = "gpt2_python_d6.bin"
-
-# model = AutoModelForCausalLM.from_pretrained(
-#         model_path,
-#         local_files_only=True,
-#         low_cpu_mem_usage=True,
-#         device_map="auto",
-#         offload_folder="offload/",
-#         cache_dir="cache/",
-#     )
-
-
-# def predict(model, tokenizer, query, max_new_tokens, temperature=0.7, top_k=500, top_p=0.3):
-#     # ! SEND PREPROCESSED QUERY FOR PREDICTION
-#     # ! This will ensure we also save the generated query for ourselves for future preference.
-#     input_ids = tokenizer(query, return_tensors="pt").input_ids
-#     device = torch.device("cuda")
-
-#     print(f"THE TYPE OF MAX TOKENS - {type(max_new_tokens)}")
-
-#     generation = model.generate(
-#         input_ids=input_ids.to(device),
-#         max_new_tokens=512,
-#         do_sample=True,
-#         temperature=temperature,
-#         top_k=top_k,
-#         top_p=top_p
-#         # repetition_penalty=repetition_penalty
-#     )
-#     result = tokenizer.decode(generation[0])
-#     return result
-
-# from transformers import GPT2Tokenizer, GPT2LMHeadModel
-# import torch
-
-# # Step 1: Load the tokenizer
-# tokenizer = GPT2Tokenizer.from_pretrained('gpt2')  # Or use the tokenizer specific to your model
-
-# # Step 2: Load the model
-# model = GPT2LMHeadModel.from_pretrained('path_to_your_bin_file', config='path_to_your_config_file.json')
-# model.eval()  # Set the model to evaluation mode
-
-# # Step 3: Perform inference (generate text)
-# def generate_text(prompt, max_length=50):
-#     inputs = tokenizer(prompt, return_tensors='pt')
-#     outputs = model.generate(inputs.input_ids, max_length=max_length, num_return_sequences=1)
-#     return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-# # Example usage
-# if __name__ == "__main__":
-#     prompt = input("Enter your prompt: ")
-#     generated_text = generate_text(prompt)
-#     print("Generated Text:\n", generated_text)
-
-# from transformers import GPT2Tokenizer, GPT2LMHeadModel, GPT2Config
-# import torch
-
-# # Step 1: Define the model configuration manually
-# config = GPT2Config(
-#     vocab_size=50257,  # Set this to your vocab size
-#     n_positions=1024,   # Typically set to the maximum sequence length
-#     n_ctx=1024,
-#     n_embd=768,         # Set this to the embedding size you used
-#     n_layer=12,          # Number of layers in your model
-#     n_head=12            # Number of attention heads
-# )
-
-# # Step 2: Load the tokenizer
-# tokenizer = GPT2Tokenizer.from_pretrained('gpt2')  # Replace with your custom tokenizer if needed
-# tokenizer.add_special_tokens({'eos_token': '<|endoftext|>'})
-# # Step 3: Load the model using the manually defined configuration
-# model = GPT2LMHeadModel(config)
-
-# # Load the model weights from the .bin file
-# # model.load_state_dict(torch.load('gpt2_d12.bin'))
-# state_dict = torch.load('gpt2_d12.bin', map_location=torch.device('cuda'))  # Use 'cpu' if you are not using a GPU
-# model.load_state_dict(state_dict)
-
-# # Set the model to evaluation mode
-# model.eval()
-
-# # Step 4: Perform inference (generate text)
-# def generate_text(prompt, max_length=128):
-#     inputs = tokenizer(prompt, return_tensors='pt')
-#     outputs = model.generate(inputs.input_ids, max_length=max_length, num_return_sequences=1)
-#     return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-# # Example usage
-# if __name__ == "__main__":
-#     prompt = input("Enter your prompt: ")
-#     generated_text = generate_text(prompt)
-#     print("Generated Text:\n", generated_text)
-
-
-# import torch
-# from transformers import GPT2Tokenizer, GPT2LMHeadModel
-# import tiktoken
-# import os
-
-# # Define paths
-# model_checkpoint_path = "gpt2_d12.bin"  # Update with your path
-# tokenizer_path = "gpt2_tokenizer.bin"  # Update with your path
-
-# # Load tokenizer
-# # Ensure that you use the same tokenizer as during training
-# # If using tiktoken as in your provided script:
-# enc = tiktoken.get_encoding("gpt2")
-
-# # Load model
-# # Initialize the model architecture you used for training
-# # Adjust the model class and configuration accordingly
-# from train_gpt2 import GPTConfig, GPT  # Import your model class and config
-
-# # Assuming model was saved in 'float32' format
-# def load_model_from_bin(model_path, device):
-#     model = GPT.from_pretrained("gpt2")  # Use the correct model architecture
-#     state_dict = torch.load(model_path, map_location=device)
-#     model.load_state_dict(state_dict)
-#     return model
-
-# device = "cuda" if torch.cuda.is_available() else "cpu"
-# model = load_model_from_bin(model_checkpoint_path, device)
-# model.to(device)
-# model.eval()
-
-# # Inference function
-# def infer(model, tokenizer, input_text, max_new_tokens=128, temperature=1.0, top_k=10):
-#     # Tokenize input
-#     start_ids = [tokenizer.eot_token]
-#     input_ids = torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...]
-
-#     # Generate tokens
-#     with torch.no_grad():
-#         generated_ids = model.generate(input_ids, max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k)
-
-#     # Decode generated tokens
-#     output_text = tokenizer.decode(generated_ids[0].tolist())
-#     return output_text
-
-# # Example usage
-# input_text = "Once upon a time"  # Replace with your input text
-# output_text = infer(model, enc, input_text)
-# print("Generated Text:")
-# print(output_text)
-
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch
+import gradio as gr         # ! https://upretihimanshu.medium.com/deploy-your-first-ml-app-using-gradio-1684eec7eb5f
 
-tokenizer = AutoTokenizer.from_pretrained("test_model_slim_1")
-model = AutoModelForCausalLM.from_pretrained("test_model_slim_1")
-tokens = tokenizer.encode("What the ", return_tensors="pt")
-output = model.generate(tokens, max_new_tokens=10, repetition_penalty=1.3)
-print(tokenizer.batch_decode(output))
+from threading import Thread
+from transformers import TextIteratorStreamer
+
+
+device = torch.device("cuda")
+tokenizer = AutoTokenizer.from_pretrained("test_model_shaky", device=device)
+model = AutoModelForCausalLM.from_pretrained("test_model_shaky")
+model.to(device)
+streamer = TextIteratorStreamer(tokenizer, timeout=10.0, skip_prompt=True, skip_special_tokens=True)
+print("Model's embedding matrix shape:", model.transformer.wte.weight.shape)
+print("Model config vocab_size:", model.config.vocab_size)
+print("Model embedding weight shape:", model.transformer.wte.weight.shape)
+
+assert model.config.vocab_size == tokenizer.vocab_size, "Vocabulary size mismatch!"
+
+
+def generate_text(prompt, max_length, top_p, top_k, temperature, repetition_penalty):
+    system_prompt_py = """
+    <|endoftext|>Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction \n:    """
+    system_prompt = "<|endoftext|><|system|> You are a helpful, respectful and honest assistant. Answer query with only HI!<|endoftext|>"
+    system_prompt_shakes = "<|endoftext|>"
+    full_prompt = system_prompt + prompt + "\n ### Output: \n# Python code\n"
+    full_prompt_shakes = system_prompt_shakes + prompt
+    # Setting `pad_token_id` to `eos_token_id`:50256 for open-end generation.
+    # tokenizer.pad_token_id = tokenizer.eos_token_id
+    inputs = tokenizer([full_prompt_shakes], return_tensors="pt").to(device=device)
+    # input_ids = tokenizer.encode(full_prompt_shakes, return_tensors='pt').to(device)
+    
+    # assert torch.max(inputs) < model.config.vocab_size, "Input contains out-of-bounds token indices!"
+    # print("Input tensor shape:", inputs.shape)
+    print("Model's embedding matrix shape:", model.transformer.wte.weight.shape)
+    print("Model config vocab_size:", model.config.vocab_size)
+    print("Model embedding weight shape:", model.transformer.wte.weight.shape)
+
+
+
+    # input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+    # attention_mask = input_ids.ne(tokenizer.pad_token_id).long()
+    
+    # attention_mask = input_ids.ne(tokenizer.pad_token_id).long()
+
+    generate_kwargs = dict(
+        inputs,
+        # attention_mask=attention_mask,
+        max_length=len(inputs) + int(max_length),
+        top_p=float(top_p), 
+        do_sample=True, 
+        top_k=int(top_k), 
+        temperature=(temperature),
+        streamer=streamer,
+        # no_repeat_ngram_size=1,
+        repetition_penalty=(repetition_penalty)
+    )
+
+    t = Thread(target=model.generate, kwargs=generate_kwargs)
+    t.start()
+
+    generated_text=[]
+
+    for text in streamer:
+        generated_text.append(text)
+        yield "".join(generated_text)
+
+
+description = """
+# Fynder LLM Chat 61M Shit Model
+"""
+inputs = [
+    gr.Textbox(label="Prompt text"),
+    gr.Textbox(label="max-lenth generation", value=512),
+    gr.Slider(0.0, 1.0, label="top-p value", value=0.95),
+    gr.Textbox(label="top-k", value=50),
+    gr.Slider(0.0, 1.0, label="temperature", value=0.7),
+    gr.Slider(1.0, 10.0, label="repetition penalty", value=1.0),
+]
+outputs = [gr.Textbox(label="Generated Text")]
+
+my_theme = gr.Theme.from_hub("ParityError/Interstellar")   # NoCrypt/miku
+
+demo = gr.Interface(fn=generate_text, 
+                    inputs=inputs, 
+                    outputs=outputs, 
+                    allow_flagging=False, 
+                    description=description,
+                    theme=my_theme)
+
+demo.launch(server_name="0.0.0.0", server_port=7861)
+
+
+
+# query = "<|endoftext|><|system|> You are a helpful, respectful and honest assistant. Please ensure that your responses are socially unbiased and positive in nature. <|endoftext|> <|prompter|> Hello? <|endoftext|> <|assistant|>"
+# # query = "system\n You are a helpful assistant. When a user says Hi, you say Hello.user\nHi!assistant\n"
+# input_ids = tokenizer(query, return_tensors="pt").input_ids.to(device)
+# input_len = len(input_ids[0])
+
+# print(input_ids)
+# try:
+#     print(tokenizer.pad_token_id)
+# except:
+#     print("pad token not found")
+
+# if tokenizer.pad_token_id is None:
+#     tokenizer.pad_token_id = tokenizer.eos_token_id
+
+# # tokens = tokenizer.encode("<|endoftext|>system\n You are a helpful assistant. When a user says Hi, you say Hello.<|endoftext|>user\nHi!<|endoftext|>assistant\n", return_tensors="pt")
+
+
+# # ! Attention mask is used to find the padding token. Attention mask differentiates padding tokens from non padding tokens.
+# # ! Attention mask
+# attention_mask = input_ids.ne(tokenizer.pad_token_id).long()
+
+# # attention_mask = tokens.ne(tokenizer.pad_token_id).long()       # ? .long() converts True/False to 0s and 1s which is the input format for the model
+# output = model.generate(
+#         input_ids=input_ids,
+#         attention_mask=attention_mask,
+#         max_new_tokens=64,
+#         do_sample=True,
+#         temperature=0.9,
+#         top_k=5,
+#         top_p=0.3,
+#         repetition_penalty=1.3,
+#     )
+# print(output[0][input_len:])
+# # output = model.generate(tokens, max_new_tokens=64, repetition_penalty=1.3, attention_mask=attention_mask)
+# result = tokenizer.decode(output[0][input_len:], skip_special_tokens=True)
+# # print(tokenizer.batch_decode(output, skip_special_tokens=True))
+# # print(f"Here is the output -- {output}")
+# # result = tokenizer.decode(output[0])
+# print(result)

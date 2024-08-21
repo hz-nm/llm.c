@@ -49,7 +49,7 @@ def make_llmc_parameters_dtype(
 
 if __name__ == "__main__":
 
-    llmc_checkpoint = Path("last_ckpt_124M_400B.bin")
+    llmc_checkpoint = Path("gpt2_shakes_d6_bf16.bin")
 
     header = np.fromfile(
         llmc_checkpoint,
@@ -104,7 +104,7 @@ if __name__ == "__main__":
         "data": v.tobytes()
     } for k, v in hf_params.items()}
 
-    out_dir = Path("llmc-gpt2-124M-400B")
+    out_dir = Path("llmc-pyins-hf-v1")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     serialize_file(hf_params, out_dir / "model.safetensors", { "format": "pt" })

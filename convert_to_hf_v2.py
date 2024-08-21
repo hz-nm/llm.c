@@ -173,8 +173,8 @@ print(tokenizer.batch_decode(output))""")
 # When used as a script
 if __name__== '__main__':
     parser=argparse.ArgumentParser()
-    parser.add_argument("--input", "-i", help="The name of the llm.c model.bin file", type=str, default="gpt2_python_d6.bin")
-    parser.add_argument("--output","-o",  help="The Hugging Face output model name", type=str, default="test_model_slim_1")
+    parser.add_argument("--input", "-i", help="The name of the llm.c model.bin file", type=str, default="gpt2_21082024_d6_bf16.bin")
+    parser.add_argument("--output","-o",  help="The Hugging Face output model name", type=str, default="test_model_shaky")
     parser.add_argument("--dtype", "-d", help="Output as either bfloat16, float16 or float32(default)", type=str, default="float32")
     parser.add_argument("--push", "-p", help="Push the model to your Hugging Face account", type=bool, default=False)
     args = parser.parse_args()
